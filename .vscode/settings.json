@@ -1,0 +1,9 @@
+{
+    "Lua.diagnostics.disable": [
+        "lowercase-global"
+    ],
+    "Lua.workspace.library": [
+        "${workspaceFolder}/autogen/lua_constants",
+        "${workspaceFolder}/autogen/lua_definitions"
+    ]
+}
