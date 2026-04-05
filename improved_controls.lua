@@ -16,6 +16,58 @@ local savedVel = {}
 -- Prevent recursion
 local redirecting = false
 
+local WITH_TURN_ACTIONS = {
+    [ACT_BUTT_SLIDE_AIR] = true,
+    [ACT_HOLD_BUTT_SLIDE_AIR] = true,
+}
+
+local WITHOUT_TURN_ACTIONS = {
+    [ACT_RIDING_SHELL_FALL] = true,
+    [ACT_DIVE] = true,
+    [ACT_AIR_THROW] = true,
+    [ACT_CRAZY_BOX_BOUNCE] = true,
+    [ACT_FORWARD_ROLLOUT] = true,
+    [ACT_BACKWARD_ROLLOUT] = true,
+    [ACT_SLIDE_KICK] = true,
+    [ACT_JUMP_KICK] = true,
+    [ACT_FLYING_TRIPLE_JUMP] = true,
+    [ACT_VERTICAL_WIND] = true,
+    [ACT_SPECIAL_TRIPLE_JUMP] = true,
+
+    [ACT_JUMP] = true,
+    [ACT_DOUBLE_JUMP] = true,
+    [ACT_TRIPLE_JUMP] = true,
+    [ACT_BACKFLIP] = true,
+    [ACT_FREEFALL] = true,
+    [ACT_HOLD_JUMP] = true,
+    [ACT_HOLD_FREEFALL] = true,
+    [ACT_SIDE_FLIP] = true,
+    [ACT_WALL_KICK_AIR] = true,
+    [ACT_LONG_JUMP] = true,
+    [ACT_TOP_OF_POLE_JUMP] = true,
+}
+
+local CAN_TURN_ACTIONS = {
+    [ACT_JUMP] = true,
+    [ACT_DOUBLE_JUMP] = true,
+    [ACT_TRIPLE_JUMP] = true,
+    [ACT_BACKFLIP] = true,
+    [ACT_FREEFALL] = true,
+    [ACT_HOLD_JUMP] = true,
+    [ACT_HOLD_FREEFALL] = true,
+    [ACT_SIDE_FLIP] = true,
+    [ACT_WALL_KICK_AIR] = true,
+    [ACT_LONG_JUMP] = true,
+    [ACT_TOP_OF_POLE_JUMP] = true,
+
+    [ACT_RIDING_SHELL_FALL] = true,
+    [ACT_AIR_THROW] = true,
+    [ACT_JUMP_KICK] = true,
+    [ACT_FLYING_TRIPLE_JUMP] = true,
+    [ACT_VERTICAL_WIND] = true,
+    [ACT_SPECIAL_TRIPLE_JUMP] = true,
+}
+
 --- @param m MarioState
 local function on_set_mario_action(m)
     if m.action == ACT_WALL_KICK_AIR then
@@ -41,7 +93,7 @@ local function before_set_mario_action(m, incomingAction, actionArg)
     if redirecting then return 0 end
     if incomingAction == ACT_DIVE or incomingAction == ACT_JUMP_KICK then
         if (m.input & INPUT_B_PRESSED) ~= 0 then
-            if actionArg == 1 then return 0 end
+            if actionArg ~= 0 then return 0 end
             if m.controller.stickMag > 48.0 then
                 -- Force a dive when the stick is held in a direction significantly
                 if incomingAction == ACT_DIVE then return 0 end
@@ -122,13 +174,13 @@ local function mario_update(m)
             m.forwardVel = -8.0
         end
 
-        -- Faster Turning (0x1000 instead of 0x800)
+        -- Faster turning
         if (m.input & INPUT_NONZERO_ANALOG) ~= 0 then
             local diff = s16(m.intendedYaw - m.faceAngle.y)
             m.faceAngle.y = m.intendedYaw - approach_s32(diff, 0, 0x800, 0x800)
         end
     end
-    -- Increase deceleration (2.0 to 2.5)
+    -- Increase deceleration
     if m.action == ACT_BRAKING then
         m.forwardVel = m.forwardVel - 0.5
         if m.forwardVel < 0 then m.forwardVel = 0 end
@@ -140,12 +192,31 @@ local function mario_update(m)
         set_mario_anim_with_accel(m, animID, 0x26000)
     end
 
-    ---------------------------------------
-    --  AIR CONTROL
-    ---------------------------------------
-    local actGroup = m.action & ACT_GROUP_MASK
-    if actGroup == ACT_GROUP_AIRBORNE and m.action ~= ACT_LONG_JUMP and m.action ~= ACT_FLYING then
-        if savedVel[m.playerIndex] == nil then return end
+    -- Increment action timer on jump for long jump buffer fix
+    if m.action == ACT_JUMP then
+        m.actionTimer = m.actionTimer + 1
+    end
+end
+
+--- @param m MarioState
+local function before_physics_step(m)
+    if savedVel[m.playerIndex] == nil then return end
+
+    local isWithTurn = WITH_TURN_ACTIONS[m.action]
+    local isWithoutTurn = WITHOUT_TURN_ACTIONS[m.action]
+    local canTurn = CAN_TURN_ACTIONS[m.action]
+
+    if m.action == ACT_LONG_JUMP then return end
+    if not isWithTurn and not isWithoutTurn then return end
+
+    -- Revert forwardVel to what it was at the very start of the frame
+    m.forwardVel = savedVel[m.playerIndex]
+
+    local dragThreshold = 32.0
+    local sidewaysSpeed = 0
+
+    if (m.input & INPUT_NONZERO_ANALOG) ~= 0 then
+        m.forwardVel = approach_f32(m.forwardVel, 0.0, 0.35, 0.35)
 
         local intendedDYaw = s16(m.intendedYaw - m.faceAngle.y)
         local intendedMag = m.intendedMag / 32.0
@@ -155,49 +226,51 @@ local function mario_update(m)
         local movingForward = (m.forwardVel > 0 and intendedMag * cosDYaw > 0) or
             (m.forwardVel < 0 and intendedMag * cosDYaw < 0)
 
-        local prev = savedVel[m.playerIndex]
-        local dragThreshold = 32.0
-        local sidewaysSpeed = 0
-
-        m.forwardVel = prev
-
-        if (m.input & INPUT_NONZERO_ANALOG) ~= 0 then
-            m.forwardVel = approach_f32(m.forwardVel, 0.0, 0.35, 0.35)
-
-            if movingForward then
-                if m.action ~= ACT_WALL_KICK_AIR then
-                    m.forwardVel = m.forwardVel + (intendedMag * cosDYaw * 1.5)
-                end
-            else
-                m.forwardVel = m.forwardVel + (intendedMag * cosDYaw * 3.5)
+        if movingForward then
+            if m.action ~= ACT_WALL_KICK_AIR then
+                m.forwardVel = m.forwardVel + (intendedMag * cosDYaw * 1.5)
             end
-
-            sidewaysSpeed = intendedMag * sinDYaw * 15.0
         else
-            m.forwardVel = approach_f32(m.forwardVel, 0.0, 0.35, 0.35)
+            m.forwardVel = m.forwardVel + (intendedMag * cosDYaw * 3.5)
         end
 
-        -- reapply drag thresholds
-        if m.forwardVel > dragThreshold then
-            m.forwardVel = m.forwardVel - 1.0
+        if isWithTurn then
+            m.faceAngle.y = m.faceAngle.y + s16(1024.0 * sinDYaw * intendedMag)
+        elseif canTurn then
+            sidewaysSpeed = intendedMag * sinDYaw * 15.0
+            m.faceAngle.y = m.faceAngle.y + s16(320.0 * sinDYaw * intendedMag)
+        else
+            sidewaysSpeed = intendedMag * sinDYaw * 15.0
+            m.faceAngle.y = m.faceAngle.y + s16(64.0 * sinDYaw * intendedMag)
         end
-        if m.forwardVel < -16.0 then
-            m.forwardVel = m.forwardVel + 2.0
-        end
-
-        m.vel.x = m.forwardVel * sins(m.faceAngle.y) + sidewaysSpeed * sins(m.faceAngle.y + 0x4000)
-        m.vel.z = m.forwardVel * coss(m.faceAngle.y) + sidewaysSpeed * coss(m.faceAngle.y + 0x4000)
-
-        savedVel[m.playerIndex] = nil
+    else
+        m.forwardVel = approach_f32(m.forwardVel, 0.0, 0.35, 0.35)
     end
 
-    -- Increment action timer on jump to account for long jump buffer fix
-    if m.action == ACT_JUMP then
-        m.actionTimer = m.actionTimer + 1
+    if m.forwardVel > dragThreshold then
+        m.forwardVel = m.forwardVel - 1.0
     end
+    if m.forwardVel < -16.0 then
+        m.forwardVel = m.forwardVel + 2.0
+    end
+
+    m.slideVelX = m.forwardVel * sins(m.faceAngle.y)
+    m.slideVelZ = m.forwardVel * coss(m.faceAngle.y)
+
+    if isWithoutTurn then
+        -- Add sideways speed vector
+        m.slideVelX = m.slideVelX + sidewaysSpeed * sins(m.faceAngle.y + 0x4000)
+        m.slideVelZ = m.slideVelZ + sidewaysSpeed * coss(m.faceAngle.y + 0x4000)
+    end
+
+    m.vel.x = m.slideVelX
+    m.vel.z = m.slideVelZ
+
+    savedVel[m.playerIndex] = nil
 end
 
 hook_event(HOOK_ON_SET_MARIO_ACTION, on_set_mario_action)
 hook_event(HOOK_BEFORE_SET_MARIO_ACTION, before_set_mario_action)
 hook_event(HOOK_BEFORE_MARIO_UPDATE, before_mario_update)
 hook_event(HOOK_MARIO_UPDATE, mario_update)
+hook_event(HOOK_BEFORE_PHYS_STEP, before_physics_step)
