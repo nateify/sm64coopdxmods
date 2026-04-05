@@ -1,20 +1,9 @@
 -- name: Improved Controls
 -- description: Based on "Improved Controls" from Super Mario 64 Plus by Mors.
 
---- Helper to cast an angle/number to a signed 16-bit integer
---- @param val number
---- @return integer
-local function s16(val)
-    val = math.floor(val) & 0xFFFF
-    if val >= 32768 then return val - 65536 end
-    return val
-end
-
--- Save velocity across hooks to modify air control
-local savedVel = {}
-
--- Prevent recursion
-local redirecting = false
+------------------------------------------------------------------------
+-- CONSTANTS & STATE
+------------------------------------------------------------------------
 
 local WITH_TURN_ACTIONS = {
     [ACT_BUTT_SLIDE_AIR] = true,
@@ -68,97 +57,82 @@ local CAN_TURN_ACTIONS = {
     [ACT_SPECIAL_TRIPLE_JUMP] = true,
 }
 
---- @param m MarioState
-local function on_set_mario_action(m)
-    if m.action == ACT_WALL_KICK_AIR then
-        if m.forwardVel < 28.0 then
-            m.forwardVel = 28.0
-        end
-    elseif m.action == ACT_SLIDE_KICK then
-        m.vel.y = 14.0
-        if m.forwardVel < 36.0 then
-            m.forwardVel = 36.0
-        end
-    end
+local savedVel = {}
 
-    local actGroup = m.action & ACT_GROUP_MASK
-    if actGroup ~= ACT_GROUP_AIRBORNE then
+------------------------------------------------------------------------
+-- UTILITIES
+------------------------------------------------------------------------
+
+--- Helper to cast an angle/number to a signed 16-bit integer
+--- @param val number
+--- @return integer
+local function s16(val)
+    val = math.floor(val) & 0xFFFF
+    if val >= 32768 then return val - 65536 end
+    return val
+end
+
+local function update_saved_velocity(m)
+    if WITH_TURN_ACTIONS[m.action] or WITHOUT_TURN_ACTIONS[m.action] then
+        savedVel[m.playerIndex] = m.forwardVel
+    else
         savedVel[m.playerIndex] = nil
     end
 end
 
---- @param m MarioState
---- @param incomingAction integer
-local function before_set_mario_action(m, incomingAction, actionArg)
-    if redirecting then return 0 end
-    if incomingAction == ACT_DIVE or incomingAction == ACT_JUMP_KICK then
-        if (m.input & INPUT_B_PRESSED) ~= 0 then
-            if actionArg ~= 0 then return 0 end
-            if m.controller.stickMag > 48.0 then
-                -- Force a dive when the stick is held in a direction significantly
-                if incomingAction == ACT_DIVE then return 0 end
-                redirecting = true
-                set_mario_action(m, ACT_DIVE, 1)
-                redirecting = false
-                return 1
-            else
-                -- Force a kick when the stick is not held
-                if incomingAction == ACT_JUMP_KICK then return 0 end
-                redirecting = true
-                set_mario_action(m, ACT_JUMP_KICK, 0)
-                redirecting = false
-                return 1
-            end
-        end
-    end
-
-    -- Allow long jump on mistimed Z+A by 1 frame when running
-    if incomingAction == ACT_GROUND_POUND then
-        if m.action == ACT_JUMP and m.actionTimer <= 1 then
-            if m.forwardVel > 10.0 then
-                return ACT_LONG_JUMP
-            end
-        end
-    end
-
-    return 0
-end
-
+------------------------------------------------------------------------
+-- FEATURES
+------------------------------------------------------------------------
 
 --- @param m MarioState
-local function before_mario_update(m)
-    local actGroup = m.action & ACT_GROUP_MASK
-    if actGroup == ACT_GROUP_AIRBORNE and m.action ~= ACT_LONG_JUMP and m.action ~= ACT_FLYING then
-        savedVel[m.playerIndex] = m.forwardVel
-    end
-end
-
---- @param m MarioState
-local function mario_update(m)
-    if m.playerIndex ~= 0 then return end
-    if m.action == ACT_GROUND_POUND and m.actionState == 0 then
-        local animInfo = m.marioObj.header.gfx.animInfo
-        -- Apply faster flip velocities
-        if m.actionTimer < 10 then
-            m.vel.y = -24.0
+local function dive_jump_kick_intent(m, incomingAction, actionArg)
+    if actionArg ~= 0 then return end
+    if (m.input & INPUT_B_PRESSED) ~= 0 then
+        if m.controller.stickMag > 48.0 then
+            -- Force Dive if stick is held
+            if incomingAction == ACT_DIVE then return end
+            return ACT_DIVE
         else
-            m.vel.y = -54.0
-        end
-
-        -- Cut the animation lag time from +4 to +2
-        if animInfo.curAnim ~= nil then
-            if m.actionTimer >= animInfo.curAnim.loopEnd + 2 and m.actionTimer < animInfo.curAnim.loopEnd + 4 then
-                play_sound(SOUND_MARIO_GROUND_POUND_WAH, m.marioObj.header.gfx.cameraToObject)
-                m.actionState = 1
-            end
+            -- Force Kick if stick is neutral
+            if incomingAction == ACT_JUMP_KICK then return end
+            return ACT_JUMP_KICK
         end
     end
+end
 
-    ---------------------------------------
-    --  WALKING & BRAKING
-    ---------------------------------------
+--- @param m MarioState
+local function buffer_long_jump(m, incomingAction)
+    -- Allow long jump on mistimed Z+A by 1 frame when running
+    if m.action == ACT_JUMP and m.actionTimer <= 1 then
+        if m.forwardVel > 10.0 then
+            return ACT_LONG_JUMP
+        end
+    end
+end
+
+--- @param m MarioState
+local function speedup_ground_pound(m)
+    local animInfo = m.marioObj.header.gfx.animInfo
+    -- Apply faster flip velocities
+    if m.actionTimer < 10 then
+        m.vel.y = -24.0
+    else
+        m.vel.y = -54.0
+    end
+
+    -- Cut the animation lag time from +4 to +2
+    if animInfo.curAnim ~= nil then
+        if m.actionTimer >= animInfo.curAnim.loopEnd + 2 and m.actionTimer < animInfo.curAnim.loopEnd + 4 then
+            play_sound(SOUND_MARIO_GROUND_POUND_WAH, m.marioObj.header.gfx.cameraToObject)
+            m.actionState = 1
+        end
+    end
+end
+
+--- @param m MarioState
+local function movement_tweaks(m)
+    -- Improved Turn-around responsiveness
     if m.action == ACT_WALKING then
-        -- Improved Turn-around responsiveness
         if analog_stick_held_back(m) ~= 0 then
             if m.forwardVel >= 12.0 and m.forwardVel < 16.0 then
                 set_mario_action(m, ACT_TURNING_AROUND, 0)
@@ -169,17 +143,18 @@ local function mario_update(m)
         end
     end
 
+    -- Faster turning
     if m.action == ACT_WALKING or m.action == ACT_DECELERATING or m.action == ACT_HOLD_WALKING or m.action == ACT_HOLD_DECELERATING then
         if m.forwardVel < -8.0 then
             m.forwardVel = -8.0
         end
 
-        -- Faster turning
         if (m.input & INPUT_NONZERO_ANALOG) ~= 0 then
             local diff = s16(m.intendedYaw - m.faceAngle.y)
             m.faceAngle.y = m.intendedYaw - approach_s32(diff, 0, 0x800, 0x800)
         end
     end
+
     -- Increase deceleration
     if m.action == ACT_BRAKING then
         m.forwardVel = m.forwardVel - 0.5
@@ -191,15 +166,10 @@ local function mario_update(m)
         local animID = m.marioObj.header.gfx.animInfo.animID
         set_mario_anim_with_accel(m, animID, 0x26000)
     end
-
-    -- Increment action timer on jump for long jump buffer fix
-    if m.action == ACT_JUMP then
-        m.actionTimer = m.actionTimer + 1
-    end
 end
 
 --- @param m MarioState
-local function before_physics_step(m)
+local function air_tweaks(m)
     if savedVel[m.playerIndex] == nil then return end
 
     local isWithTurn = WITH_TURN_ACTIONS[m.action]
@@ -269,8 +239,109 @@ local function before_physics_step(m)
     savedVel[m.playerIndex] = nil
 end
 
-hook_event(HOOK_ON_SET_MARIO_ACTION, on_set_mario_action)
+--- @param m MarioState
+local function ledge_protection(m)
+    if (m.input & INPUT_NONZERO_ANALOG) ~= 0
+        and (m.action & (ACT_FLAG_BUTT_OR_STOMACH_SLIDE | ACT_FLAG_SHORT_HITBOX)) == 0
+        and (m.pos.y <= m.floorHeight)
+        and (mario_get_floor_class(m) ~= SURFACE_CLASS_VERY_SLIPPERY) then
+        local floorNormalY = m.floor ~= nil and m.floor.normal.y or 1.0
+        local qStepX = floorNormalY * (m.vel.x / 4.0)
+        local qStepZ = floorNormalY * (m.vel.z / 4.0)
+
+        local testX = m.pos.x
+        local testZ = m.pos.z
+
+        for i = 1, 4 do
+            testX = testX + qStepX
+            testZ = testZ + qStepZ
+
+            local predictedFloorHeight = find_floor_height(testX, m.pos.y, testZ)
+            if (m.pos.y > predictedFloorHeight + 100.0) then
+                local movementAngle = atan2s(m.vel.z, m.vel.x)
+                local intentDifference = abs_angle_diff(m.intendedYaw, movementAngle)
+
+                -- 0x3000 is 67.5 degrees
+                if intentDifference > 0x3000 then
+                    m.forwardVel = 0
+                    m.vel.x = 0
+                    m.vel.z = 0
+                    return GROUND_STEP_NONE
+                end
+                break
+            end
+        end
+    end
+end
+
+------------------------------------------------------------------------
+-- DISPATCHERS
+------------------------------------------------------------------------
+
+--- @param m MarioState
+local function on_set_mario_action(m)
+    if m.action == ACT_WALL_KICK_AIR then
+        if m.forwardVel < 28.0 then
+            m.forwardVel = 28.0
+        end
+    elseif m.action == ACT_SLIDE_KICK then
+        m.vel.y = 14.0
+        if m.forwardVel < 36.0 then
+            m.forwardVel = 36.0
+        end
+    end
+
+    update_saved_velocity(m)
+end
+
+--- @param m MarioState
+local function before_set_mario_action(m, incomingAction, actionArg)
+    if incomingAction == ACT_DIVE or incomingAction == ACT_JUMP_KICK then
+        local diveKickResult = dive_jump_kick_intent(m, incomingAction, actionArg)
+        if diveKickResult ~= nil then return diveKickResult end
+    end
+
+    if incomingAction == ACT_GROUND_POUND then
+        local longJumpResult = buffer_long_jump(m, incomingAction)
+        if longJumpResult ~= nil then return longJumpResult end
+    end
+end
+
+--- @param m MarioState
+local function before_mario_update(m)
+    update_saved_velocity(m)
+end
+
+--- @param m MarioState
+local function on_mario_update(m)
+    if m.playerIndex ~= 0 then return end
+
+    if m.action == ACT_GROUND_POUND and m.actionState == 0 then
+        speedup_ground_pound(m)
+    end
+
+    movement_tweaks(m)
+
+    -- Increment action timer on jump for buffer_long_jump
+    if m.action == ACT_JUMP then
+        m.actionTimer = m.actionTimer + 1
+    end
+end
+
+--- @param m MarioState
+--- @param stepType integer
+local function before_phys_step(m, stepType)
+    if stepType == STEP_TYPE_AIR then
+        air_tweaks(m)
+    end
+
+    if stepType == STEP_TYPE_GROUND then
+        ledge_protection(m)
+    end
+end
+
+hook_event(HOOK_BEFORE_PHYS_STEP, before_phys_step)
 hook_event(HOOK_BEFORE_SET_MARIO_ACTION, before_set_mario_action)
+hook_event(HOOK_ON_SET_MARIO_ACTION, on_set_mario_action)
 hook_event(HOOK_BEFORE_MARIO_UPDATE, before_mario_update)
-hook_event(HOOK_MARIO_UPDATE, mario_update)
-hook_event(HOOK_BEFORE_PHYS_STEP, before_physics_step)
+hook_event(HOOK_MARIO_UPDATE, on_mario_update)
