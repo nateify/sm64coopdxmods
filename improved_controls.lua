@@ -57,6 +57,8 @@ local CAN_TURN_ACTIONS = {
     [ACT_SPECIAL_TRIPLE_JUMP] = true,
 }
 
+local ACT_MODERN_LEDGE_DROP = allocate_mario_action(ACT_GROUP_AIRBORNE | ACT_FLAG_AIR)
+
 local savedVel = {}
 
 ------------------------------------------------------------------------
@@ -129,6 +131,7 @@ local function speedup_ground_pound(m)
     end
 end
 
+
 --- @param m MarioState
 local function movement_tweaks(m)
     -- Improved Turn-around responsiveness
@@ -165,6 +168,54 @@ local function movement_tweaks(m)
     if m.action == ACT_START_CROUCHING or m.action == ACT_STOP_CROUCHING then
         local animID = m.marioObj.header.gfx.animInfo.animID
         set_mario_anim_with_accel(m, animID, 0x26000)
+    end
+
+    -- Ledge protection
+    if m.action == ACT_DECELERATING then
+        check_ledge_climb_down(m)
+    end
+end
+
+--- @param m MarioState
+local function act_modern_ledge_drop(m)
+    set_mario_animation(m, MARIO_ANIM_GENERAL_FALL)
+
+    m.vel.y = math.max(m.vel.y - 4.0, -75.0)
+
+    local step = perform_air_step(m, 0)
+
+    if step == AIR_STEP_LANDED then
+        set_mario_action(m, ACT_FREEFALL_LAND, 0)
+        return true
+    end
+
+    if m.actionTimer > 8 then
+        set_mario_action(m, ACT_FREEFALL, 0)
+    end
+
+    m.actionTimer = m.actionTimer + 1
+    return false
+end
+
+--- @param m MarioState
+local function improved_ledge_drop(m)
+    local stick_down = m.controller.stickY < -60
+    local z_pressed = (m.controller.buttonPressed & Z_TRIG) ~= 0
+    if z_pressed or stick_down then
+        set_mario_action(m, ACT_MODERN_LEDGE_DROP, 0)
+        m.pos.y = m.pos.y - 160
+        m.pos.x = m.pos.x - 30 * sins(m.faceAngle.y)
+        m.pos.z = m.pos.z - 30 * coss(m.faceAngle.y)
+
+        vec3f_copy(m.marioObj.header.gfx.pos, m.pos)
+        vec3f_copy(m.marioObj.header.gfx.prevPos, m.pos)
+
+        m.forwardVel = 0
+        m.vel.y = 0.0
+
+        m.controller.buttonPressed = m.controller.buttonPressed & ~Z_TRIG
+
+        play_sound(SOUND_ACTION_TERRAIN_JUMP, m.marioObj.header.gfx.cameraToObject)
     end
 end
 
@@ -310,6 +361,10 @@ end
 --- @param m MarioState
 local function before_mario_update(m)
     update_saved_velocity(m)
+
+    if m.action == ACT_LEDGE_GRAB then
+        improved_ledge_drop(m)
+    end
 end
 
 --- @param m MarioState
@@ -345,3 +400,4 @@ hook_event(HOOK_BEFORE_SET_MARIO_ACTION, before_set_mario_action)
 hook_event(HOOK_ON_SET_MARIO_ACTION, on_set_mario_action)
 hook_event(HOOK_BEFORE_MARIO_UPDATE, before_mario_update)
 hook_event(HOOK_MARIO_UPDATE, on_mario_update)
+hook_mario_action(ACT_MODERN_LEDGE_DROP, act_modern_ledge_drop)
