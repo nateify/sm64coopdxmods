@@ -158,6 +158,11 @@ local function movement_tweaks(m)
         end
     end
 
+    if m.action == ACT_BURNING_GROUND then
+        local diff = s16(m.intendedYaw - m.faceAngle.y)
+        m.faceAngle.y = m.intendedYaw - approach_s32(diff, 0, 0x200, 0x200)
+    end
+
     -- Increase deceleration
     if m.action == ACT_BRAKING then
         m.forwardVel = m.forwardVel - 0.5
