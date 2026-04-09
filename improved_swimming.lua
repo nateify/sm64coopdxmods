@@ -58,7 +58,7 @@ local function on_mario_update(m)
 
     if (m.action & ACT_GROUP_MASK) == ACT_GROUP_SUBMERGED then
         -- Alter buoyancy
-        if (m.flags & MARIO_METAL_CAP) == 0 then
+        if (m.flags & MARIO_METAL_CAP) == 0 and (m.action & ACT_FLAG_INVULNERABLE) == 0 then
             local near_surface = ((m.waterLevel - 80) - m.pos.y) < 400.0
             if near_surface then
                 m.vel.y = m.vel.y + 0.75
