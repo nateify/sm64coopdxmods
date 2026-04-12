@@ -2,6 +2,15 @@
 -- description: Based on "Improved Hanging" from Super Mario 64 Plus by Mors.
 
 ------------------------------------------------------------------------
+-- CONSTANTS & STATE
+------------------------------------------------------------------------
+
+local ALLOWED_HANG_ACTIONS = {
+    [ACT_JUMP] = true,
+    [ACT_DOUBLE_JUMP] = true,
+}
+
+------------------------------------------------------------------------
 -- FEATURES
 ------------------------------------------------------------------------
 
@@ -46,7 +55,7 @@ end
 local function act_improved_start_hanging(m)
     m.actionTimer = m.actionTimer + 1
 
-    if (m.input & INPUT_NONZERO_ANALOG) ~= 0 and m.actionTimer >= 31 then
+    if (m.input & INPUT_NONZERO_ANALOG) ~= 0 and m.actionTimer >= 18 then
         return set_mario_action(m, ACT_HANGING, 0)
     end
 
@@ -148,7 +157,7 @@ end
 --- @param m MarioState
 local function before_mario_update(m)
     -- Grab ceilings more easily
-    if (m.action & ACT_FLAG_AIR) ~= 0 and m.vel.y >= 0 then
+    if ALLOWED_HANG_ACTIONS[m.action] and m.vel.y >= 0 then
         if m.ceil ~= nil and m.ceil.type == SURFACE_HANGABLE then
             local distToCeil = m.ceilHeight - m.pos.y
             if distToCeil < 160 then
@@ -160,6 +169,6 @@ local function before_mario_update(m)
 end
 
 hook_event(HOOK_BEFORE_MARIO_UPDATE, before_mario_update)
-hook_mario_action(ACT_START_HANGING, { every_frame = act_improved_start_hanging })
-hook_mario_action(ACT_HANGING, { every_frame = act_improved_hanging })
-hook_mario_action(ACT_HANG_MOVING, { every_frame = act_improved_hang_moving })
+hook_mario_action(ACT_START_HANGING, act_improved_start_hanging)
+hook_mario_action(ACT_HANGING, act_improved_hanging)
+hook_mario_action(ACT_HANG_MOVING, act_improved_hang_moving)

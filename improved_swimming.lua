@@ -54,7 +54,6 @@ end
 
 --- @param m MarioState
 local function on_mario_update(m)
-    if m.playerIndex ~= 0 then return end
 
     if (m.action & ACT_GROUP_MASK) == ACT_GROUP_SUBMERGED then
         -- Alter buoyancy

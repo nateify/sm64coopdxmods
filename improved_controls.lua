@@ -218,8 +218,6 @@ local function improved_ledge_drop(m)
         m.forwardVel = 0
         m.vel.y = 0.0
 
-        m.controller.buttonPressed = m.controller.buttonPressed & ~Z_TRIG
-
         play_sound(SOUND_ACTION_TERRAIN_JUMP, m.marioObj.header.gfx.cameraToObject)
     end
 end
@@ -374,8 +372,6 @@ end
 
 --- @param m MarioState
 local function on_mario_update(m)
-    if m.playerIndex ~= 0 then return end
-
     if m.action == ACT_GROUND_POUND and m.actionState == 0 then
         speedup_ground_pound(m)
     end
@@ -396,7 +392,7 @@ local function before_phys_step(m, stepType)
     end
 
     if stepType == STEP_TYPE_GROUND then
-        ledge_protection(m)
+        return ledge_protection(m)
     end
 end
 
