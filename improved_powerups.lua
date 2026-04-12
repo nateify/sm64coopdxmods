@@ -34,8 +34,6 @@ local function before_phys_step(m)
     end
 end
 
-
-
 --- @param m MarioState
 local function before_mario_update(m)
     if m.action == ACT_WATER_SHELL_SWIMMING then
@@ -45,7 +43,6 @@ local function before_mario_update(m)
         end
     end
 end
-
 
 hook_mario_action(ACT_METAL_WATER_FALLING, { gravity = custom_metal_water_gravity })
 hook_mario_action(ACT_METAL_WATER_JUMP, { gravity = custom_metal_water_gravity })

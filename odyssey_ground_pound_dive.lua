@@ -3,7 +3,6 @@
 
 --- @param m MarioState
 local function odyssey_dive_update(m)
-    if m.playerIndex ~= 0 then return end
     if m.action ~= ACT_GROUND_POUND then return end
     if (m.input & INPUT_B_PRESSED) == 0 then return end
 
